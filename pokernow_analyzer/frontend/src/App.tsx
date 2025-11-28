@@ -205,28 +205,94 @@ const App: React.FC = () => {
   };
 
   const aiSummary = useMemo(() => {
-    if (!apiResult) return "";
-    const lines: string[] = [];
+  if (!apiResult) return "";
+
+  const lines: string[] = [];
+
+  lines.push(
+    `Game summary: ${apiResult.num_hands} hands, big blind ${apiResult.big_blind}.`
+  );
+  lines.push("");
+  lines.push(
+    "Per-player full stats (grouped by general / preflop / postflop / aggression):"
+  );
+  lines.push("");
+
+  for (const s of apiResult.stats) {
+    lines.push(`Player: ${s.player}`);
     lines.push(
-      `Game summary: ${apiResult.num_hands} hands, big blind ${apiResult.big_blind}.`
+      `  General: hands=${s.hands}, BB/100=${s["BB/100"].toFixed(
+        1
+      )}, SD BB/100=${s["SD BB/100"].toFixed(
+        1
+      )}, NonSD BB/100=${s["NonSD BB/100"].toFixed(
+        1
+      )}, SawFlop=${s.SawFlop}`
     );
-    lines.push("Per-player key stats (VPIP/PFR/3BET/WTSD/W$SD/WWSF/BB/100):");
-    for (const s of apiResult.stats) {
-      lines.push(
-        `- ${s.player}: hands=${s.hands}, BB/100=${s["BB/100"].toFixed(
-          1
-        )}, VPIP=${s["VPIP%"].toFixed(1)}%, PFR=${s["PFR%"].toFixed(
-          1
-        )}%, 3BET=${s["3BET%"].toFixed(1)}%, WTSD=${s["WTSD%"].toFixed(
-          1
-        )}%, W$SD=${s["W$SD%"].toFixed(1)}%, WWSF=${s["WWSF%"].toFixed(1)}%`
-      );
-    }
+
     lines.push(
-      "Please analyse these stats and describe each player's style (nit, calling station, TAG, LAG, maniac, etc.) and likely leaks."
+      `  Preflop: VPIP=${s["VPIP%"].toFixed(1)}%, PFR=${s["PFR%"].toFixed(
+        1
+      )}%, Limp=${s["Limp%"].toFixed(1)}%, CallOpen=${s[
+        "Call Open%"
+      ].toFixed(1)}%, Squeeze=${s["Squeeze%"].toFixed(1)}%, 3BET=${s[
+        "3BET%"
+      ].toFixed(1)}%, 4BET=${s["4BET%"].toFixed(
+        1
+      )}%, FoldTo3BET=${s["Fold to 3BET%"].toFixed(
+        1
+      )}%, FoldTo4BET=${s["Fold to 4BET%"].toFixed(1)}%`
     );
-    return lines.join("\n");
-  }, [apiResult]);
+
+    lines.push(
+      `  Showdown / overall aggression: WTSD=${s["WTSD%"].toFixed(
+        1
+      )}%, W$SD=${s["W$SD%"].toFixed(1)}%, WWSF=${s["WWSF%"].toFixed(
+        1
+      )}%, AF=${s.AF.toFixed(2)}, AFq=${s["AFq%"].toFixed(1)}%`
+    );
+
+    lines.push(
+      `  Cbet: FlopCbet=${s["Flop Cbet%"].toFixed(
+        1
+      )}%, TurnCbet=${s["Turn Cbet%"].toFixed(
+        1
+      )}%, RiverCbet=${s["River Cbet%"].toFixed(1)}%`
+    );
+
+    lines.push(
+      `  Fold vs Cbet: FoldFlopCbet=${s["Fold to Flop Cbet%"].toFixed(
+        1
+      )}%, FoldTurnCbet=${s["Fold to Turn Cbet%"].toFixed(
+        1
+      )}%, FoldRiverCbet=${s["Fold to River Cbet%"].toFixed(1)}%`
+    );
+
+    lines.push(
+      `  Check-raise: CRFlop=${s["CR Flop%"].toFixed(
+        1
+      )}%, CRTurn=${s["CR Turn%"].toFixed(
+        1
+      )}%, CRRiver=${s["CR River%"].toFixed(1)}%`
+    );
+
+    lines.push(
+      `  Donk bets: DonkFlop=${s["Donk Flop%"].toFixed(
+        1
+      )}%, DonkTurn=${s["Donk Turn%"].toFixed(
+        1
+      )}%, DonkRiver=${s["Donk River%"].toFixed(1)}%`
+    );
+
+    lines.push(""); // blank line between players
+  }
+
+  lines.push(
+    "Please analyse these stats and describe each player's style (nit, TAG, LAG, maniac, calling station, etc.), their likely leaks (preflop and postflop), and practical exploitation strategies against them."
+  );
+
+  return lines.join("\n");
+}, [apiResult]);
 
   const handleCopyAiSummary = async () => {
     if (!aiSummary) return;
@@ -282,7 +348,7 @@ const App: React.FC = () => {
           AI Helper
         </button>
       </nav>
-      <div style={{ marginTop: "auto", fontSize: "0.7rem", color: "#6b7280" }}>
+      <div style={{ marginTop: "auto", fontSize: "0.7rem", color: "#9ca3af" }}>
         Backend: <span style={{ fontFamily: "monospace" }}>{API_BASE}</span>
       </div>
     </div>
@@ -301,7 +367,11 @@ const App: React.FC = () => {
           accept=".csv"
           multiple
           onChange={handleFileChange}
-          style={{ marginTop: "0.75rem" }}
+          style={{
+            marginTop: "0.75rem",
+            fontSize: "0.9rem",
+            color: "#111827",
+          }}
         />
         <button
           onClick={handleAnalyze}
@@ -325,7 +395,9 @@ const App: React.FC = () => {
           {loading ? "Analyzing..." : "Analyze"}
         </button>
         {error && (
-          <div style={{ marginTop: "0.5rem", color: "#b91c1c", fontSize: "0.85rem" }}>
+          <div
+            style={{ marginTop: "0.5rem", color: "#b91c1c", fontSize: "0.85rem" }}
+          >
             Error: {error}
           </div>
         )}
@@ -393,6 +465,7 @@ const App: React.FC = () => {
               display: "flex",
               gap: "0.75rem",
               alignItems: "center",
+              color: "#111827",
             }}
           >
             <label style={{ fontSize: "0.85rem" }}>
@@ -408,10 +481,11 @@ const App: React.FC = () => {
                   width: 80,
                   padding: "0.2rem 0.4rem",
                   fontSize: "0.85rem",
+                  color: "#111827",
                 }}
               />
             </label>
-            <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+            <span style={{ fontSize: "0.8rem", color: "#4b5563" }}>
               Showing {filteredStats.length} players
             </span>
           </div>
@@ -431,19 +505,44 @@ const App: React.FC = () => {
                 width: "100%",
               }}
             >
-              <thead style={{ backgroundColor: "#f3f4f6" }}>
+              <thead>
                 <tr>
-                  {headerCell("Player", "hands")}
-                  {headerCell("Hands", "hands")}
-                  {headerCell("BB/100", "BB/100")}
-                  {headerCell("VPIP%", "VPIP%")}
-                  {headerCell("PFR%", "PFR%")}
-                  {headerCell("3BET%", "3BET%")}
-                  {headerCell("4BET%", "4BET%")}
-                  {headerCell("WTSD%", "WTSD%")}
-                  {headerCell("W$SD%", "W$SD%")}
-                  {headerCell("WWSF%", "WWSF%")}
-                  {headerCell("AF", "AF")}
+                {headerCell("Player", "hands")}
+                {headerCell("Hands", "hands")}
+                {headerCell("BB/100", "BB/100")}
+                {headerCell("SD BB/100", "SD BB/100")}
+                {headerCell("NonSD BB/100", "NonSD BB/100")}
+
+                {headerCell("VPIP%", "VPIP%")}
+                {headerCell("PFR%", "PFR%")}
+                {headerCell("Limp%", "Limp%")}
+                {headerCell("Call Open%", "Call Open%")}
+                {headerCell("Squeeze%", "Squeeze%")}
+                {headerCell("3BET%", "3BET%")}
+                {headerCell("4BET%", "4BET%")}
+                {headerCell("Fold to 3BET%", "Fold to 3BET%")}
+                {headerCell("Fold to 4BET%", "Fold to 4BET%")}
+
+                {headerCell("WTSD%", "WTSD%")}
+                {headerCell("W$SD%", "W$SD%")}
+                {headerCell("WWSF%", "WWSF%")}
+                {headerCell("AF", "AF")}
+                {headerCell("AFq%", "AFq%")}
+
+                {headerCell("Flop Cbet%", "Flop Cbet%")}
+                {headerCell("Fold Flop Cbet%", "Fold to Flop Cbet%")}
+                {headerCell("Turn Cbet%", "Turn Cbet%")}
+                {headerCell("Fold Turn Cbet%", "Fold to Turn Cbet%")}
+                {headerCell("River Cbet%", "River Cbet%")}
+                {headerCell("Fold River Cbet%", "Fold to River Cbet%")}
+
+                {headerCell("CR Flop%", "CR Flop%")}
+                {headerCell("CR Turn%", "CR Turn%")}
+                {headerCell("CR River%", "CR River%")}
+
+                {headerCell("Donk Flop%", "Donk Flop%")}
+                {headerCell("Donk Turn%", "Donk Turn%")}
+                {headerCell("Donk River%", "Donk River%")}
                 </tr>
               </thead>
               <tbody>
@@ -454,17 +553,45 @@ const App: React.FC = () => {
                       backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f9fafb",
                     }}
                   >
-                    <td style={cellStyle}>{s.player}</td>
-                    <td style={cellStyle}>{s.hands}</td>
-                    <td style={cellStyle}>{s["BB/100"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["VPIP%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["PFR%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["3BET%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["4BET%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["WTSD%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["W$SD%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["WWSF%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s.AF.toFixed(2)}</td>
+                  <td style={cellStyle}>{s.player}</td>
+                  <td style={cellStyle}>{s.hands}</td>
+
+                  <td style={cellStyle}>{s["BB/100"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["SD BB/100"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["NonSD BB/100"].toFixed(1)}</td>
+
+                  <td style={cellStyle}>{s["VPIP%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["PFR%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Limp%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Call Open%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Squeeze%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["3BET%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["4BET%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Fold to 3BET%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Fold to 4BET%"].toFixed(1)}</td>
+
+                  <td style={cellStyle}>{s["WTSD%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["W$SD%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["WWSF%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s.AF.toFixed(2)}</td>
+                  <td style={cellStyle}>{s["AFq%"].toFixed(1)}</td>
+
+                  <td style={cellStyle}>{s["Flop Cbet%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Fold to Flop Cbet%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Turn Cbet%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Fold to Turn Cbet%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["River Cbet%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Fold to River Cbet%"].toFixed(1)}</td>
+
+                  <td style={cellStyle}>{s["CR Flop%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["CR Turn%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["CR River%"].toFixed(1)}</td>
+
+                  <td style={cellStyle}>{s["Donk Flop%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Donk Turn%"].toFixed(1)}</td>
+                  <td style={cellStyle}>{s["Donk River%"].toFixed(1)}</td>
+
+
                   </tr>
                 ))}
               </tbody>
@@ -521,19 +648,44 @@ const App: React.FC = () => {
           {Object.keys(aliasMap).length > 0 && (
             <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
               <h4 style={{ marginBottom: "0.25rem" }}>Current mappings:</h4>
-              <ul>
+              <ul
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.4rem",
+                  paddingLeft: 0,
+                  listStyle: "none",
+                }}
+              >
                 {Object.entries(aliasMap).map(([raw, canon]) => (
-                  <li key={raw}>
-                    <code>{raw}</code> → <strong>{canon}</strong>{" "}
+                  <li
+                    key={raw}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                      backgroundColor: "#e2e8f0",
+                      padding: "0.35rem 0.55rem",
+                      borderRadius: 8,
+                      width: "fit-content",
+                      color: "#0f172a",
+                    }}
+                  >
+                    <span>{raw}</span>
+                    <span style={{ color: "#475569" }}>→</span>
+                    <span style={{ fontWeight: 600 }}>{canon}</span>
+
                     <button
                       onClick={() => handleRemoveAlias(raw)}
                       style={{
                         marginLeft: 6,
-                        fontSize: "0.7rem",
+                        fontSize: "0.75rem",
                         border: "none",
                         padding: "0.1rem 0.4rem",
                         borderRadius: 4,
                         cursor: "pointer",
+                        backgroundColor: "#0f172a",
+                        color: "white",
                       }}
                     >
                       x
@@ -564,16 +716,30 @@ const App: React.FC = () => {
                 width: "100%",
               }}
             >
-              <thead style={{ backgroundColor: "#f3f4f6" }}>
+              <thead>
                 <tr>
-                  <th style={cellStyle}>Alias</th>
-                  <th style={cellStyle}>Hands</th>
-                  <th style={cellStyle}>BB/100</th>
-                  <th style={cellStyle}>VPIP%</th>
-                  <th style={cellStyle}>PFR%</th>
-                  <th style={cellStyle}>3BET%</th>
-                  <th style={cellStyle}>WTSD%</th>
-                  <th style={cellStyle}>W$SD%</th>
+                  <th style={headerCellStyle}>Alias</th>
+                  <th style={headerCellStyle}>Hands</th>
+                  <th style={headerCellStyle}>BB/100</th>
+                  <th style={headerCellStyle}>VPIP%</th>
+                  <th style={headerCellStyle}>PFR%</th>
+                  <th style={headerCellStyle}>Limp%</th>
+                  <th style={headerCellStyle}>Call Open%</th>
+                  <th style={headerCellStyle}>Squeeze%</th>
+                  <th style={headerCellStyle}>3BET%</th>
+                  <th style={headerCellStyle}>4BET%</th>
+                  <th style={headerCellStyle}>Fold to 3BET%</th>
+                  <th style={headerCellStyle}>Fold to 4BET%</th>
+                  <th style={headerCellStyle}>WTSD%</th>
+                  <th style={headerCellStyle}>W$SD%</th>
+                  <th style={headerCellStyle}>WWSF%</th>
+                  <th style={headerCellStyle}>Flop Cbet%</th>
+                  <th style={headerCellStyle}>Fold Flop Cbet%</th>
+                  <th style={headerCellStyle}>Turn Cbet%</th>
+                  <th style={headerCellStyle}>Fold Turn Cbet%</th>
+                  <th style={headerCellStyle}>River Cbet%</th>
+                  <th style={headerCellStyle}>Fold River Cbet%</th>
+                  <th style={headerCellStyle}>AF</th>
                 </tr>
               </thead>
               <tbody>
@@ -584,15 +750,29 @@ const App: React.FC = () => {
                       backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f9fafb",
                     }}
                   >
-                    <td style={cellStyle}>{s.alias}</td>
-                    <td style={cellStyle}>{s.hands}</td>
-                    <td style={cellStyle}>{s["BB/100"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["VPIP%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["PFR%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["3BET%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["WTSD%"].toFixed(1)}</td>
-                    <td style={cellStyle}>{s["W$SD%"].toFixed(1)}</td>
-                  </tr>
+                     <td style={cellStyle}>{s.alias}</td>
+                      <td style={cellStyle}>{s.hands}</td>
+                      <td style={cellStyle}>{s["BB/100"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["VPIP%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["PFR%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Limp%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Call Open%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Squeeze%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["3BET%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["4BET%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Fold to 3BET%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Fold to 4BET%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["WTSD%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["W$SD%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["WWSF%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Flop Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Fold to Flop Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Turn Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Fold to Turn Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["River Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s["Fold to River Cbet%"].toFixed(1)}</td>
+                      <td style={cellStyle}>{s.AF.toFixed(2)}</td>
+                                  </tr>
                 ))}
               </tbody>
             </table>
@@ -641,7 +821,7 @@ const App: React.FC = () => {
           </p>
 
           <div style={{ marginTop: "1rem", height: 260 }}>
-            <h3 style={{ fontSize: "0.95rem", marginBottom: 4 }}>
+            <h3 style={{ fontSize: "0.95rem", marginBottom: 4, color: "#111827" }}>
               BB/100 by Player
             </h3>
             <ResponsiveContainer width="100%" height="100%">
@@ -656,7 +836,7 @@ const App: React.FC = () => {
           </div>
 
           <div style={{ marginTop: "1.5rem", height: 260 }}>
-            <h3 style={{ fontSize: "0.95rem", marginBottom: 4 }}>
+            <h3 style={{ fontSize: "0.95rem", marginBottom: 4, color: "#111827" }}>
               BB/100 by Alias
             </h3>
             <ResponsiveContainer width="100%" height="100%">
@@ -671,7 +851,7 @@ const App: React.FC = () => {
           </div>
 
           <div style={{ marginTop: "1.5rem", height: 260 }}>
-            <h3 style={{ fontSize: "0.95rem", marginBottom: 4 }}>
+            <h3 style={{ fontSize: "0.95rem", marginBottom: 4, color: "#111827" }}>
               VPIP vs PFR (Alias)
             </h3>
             <ResponsiveContainer width="100%" height="100%">
@@ -712,6 +892,7 @@ const App: React.FC = () => {
             borderRadius: 8,
             border: "1px solid #e5e7eb",
             backgroundColor: "#f9fafb",
+            color: "#111827",
           }}
         />
         <button
@@ -733,7 +914,7 @@ const App: React.FC = () => {
           Copy summary for AI
         </button>
         {!apiResult && (
-          <p style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#6b7280" }}>
+          <p style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "#4b5563" }}>
             (Tip: run an analysis first to populate this.)
           </p>
         )}
@@ -792,34 +973,42 @@ const cardStyle: React.CSSProperties = {
 const cardTitleStyle: React.CSSProperties = {
   fontSize: "1.1rem",
   fontWeight: 600,
+  color: "#111827",
 };
 
 const cardTextStyle: React.CSSProperties = {
   fontSize: "0.9rem",
-  color: "#4b5563",
+  color: "#1f2937",
   marginTop: 4,
 };
 
 const cellStyle: React.CSSProperties = {
   borderBottom: "1px solid #e5e7eb",
-  padding: "0.35rem 0.55rem",
+  padding: "0.5rem 0.75rem",
   textAlign: "left",
   whiteSpace: "nowrap",
+  color: "#111827",
+  backgroundColor: "#ffffff",
 };
 
 const headerCellStyle: React.CSSProperties = {
-  ...cellStyle,
-  fontWeight: 600,
-  fontSize: "0.78rem",
+  borderBottom: "1px solid #111827",
+  padding: "0.5rem 0.75rem",
+  textAlign: "left",
+  whiteSpace: "nowrap",
+  backgroundColor: "#111827",
+  color: "#f9fafb",
+  fontWeight: 700,
+  fontSize: "0.8rem",
   cursor: "pointer",
-  backgroundColor: "#f3f4f6",
 };
 
 const aliasInputStyle: React.CSSProperties = {
   padding: "0.3rem 0.5rem",
   borderRadius: 6,
-  border: "1px solid #d1d5db",
+  border: "1px solid #cbd5e1",
   fontSize: "0.8rem",
+  color: "#111827",
 };
 
 const SummaryItem: React.FC<{ label: string; value: number | string }> = ({
@@ -834,8 +1023,10 @@ const SummaryItem: React.FC<{ label: string; value: number | string }> = ({
       border: "1px solid #e5e7eb",
     }}
   >
-    <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>{label}</div>
-    <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>{value}</div>
+    <div style={{ fontSize: "0.75rem", color: "#4b5563" }}>{label}</div>
+    <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#111827" }}>
+      {value}
+    </div>
   </div>
 );
 

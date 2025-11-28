@@ -37,15 +37,30 @@ def split_into_hands(df: pd.DataFrame):
     return hands
 
 
+# ========= NEW: name normalisation =========
+def normalize_name(raw: str) -> str:
+    """
+    Turn things like:
+      'loki'                 -> 'loki'
+      'loki @ 7Nv8hjyL1f'    -> 'loki'
+    Also trims whitespace.
+    """
+    return raw.split("@", 1)[0].strip()
+# ===========================================
+
+
 def extract_player_name(entry: str):
     """
-    PokerNow lines look like: '"loki @ 7Nv8hjyL1f" raises to 0.30'
-    We just want 'loki'.
+    PokerNow lines look like:
+      '"loki @ 7Nv8hjyL1f" raises to 0.30'
+      '"loki" raises to 0.30'
+    We want just 'loki' in both cases.
     """
-    m = re.search(r'"([^"]+?) @ [^"]+"', entry)
+    m = re.search(r'"([^"]+)"', entry)
     if not m:
         return None
-    return m.group(1)
+    raw = m.group(1)
+    return normalize_name(raw)
 
 
 def detect_big_blind(df: pd.DataFrame) -> float:
@@ -217,6 +232,7 @@ def analyze_all_stats(
         has_caller_after_open = False
 
         for entry in hand:
+
             # --- Street markers ---
             if any(m in entry for m in FLOP_MARKERS):
                 street = "flop"
@@ -242,17 +258,26 @@ def analyze_all_stats(
                 showdown = True
 
             # Uncalled bet returned
-            if entry.startswith("Uncalled bet"):
+            if "Uncalled bet" in entry:
+                # Match formats like:
+                #   Uncalled bet of 0.40 returned to "loki"
+                #   Uncalled bet (0.40) returned to "loki"
                 m2 = re.search(
-                    r'Uncalled bet of ([0-9]+\.[0-9]+) returned to "([^"]+)"', entry
+                    r'Uncalled bet (?:of |\()([0-9]+(?:\.[0-9]+)?)\)? returned to "([^"]+)"',
+                    entry,
                 )
                 if m2:
                     amt = float(m2.group(1))
-                    pname = m2.group(2)
+                    raw_name = m2.group(2)
+                    pname = normalize_name(raw_name)  # <<<<<< FIX HERE
                     invested[pname] -= amt
                     total_contrib[pname] -= amt
+                else:
+                    # optional debug
+                    print("[WARN] Could not parse Uncalled bet line:", entry)
                 continue
 
+            # All other lines use the normalised name
             name = extract_player_name(entry)
             if not name:
                 continue
@@ -474,14 +499,28 @@ def analyze_all_stats(
                             turn_agg = name
                 continue
 
-            # Collected from pot
-            if " collected " in entry and "from pot" in entry:
-                m = re.search(r" collected ([0-9]+\.[0-9]+) from pot", entry)
+            # Collected from pot (main pot / side pot / the pot)
+            if " collected " in entry and "pot" in entry:
+                # e.g. 'collected 1.20 from pot',
+                #      'collected 3.40 from main pot',
+                #      'collected 5.60 from side pot 1'
+                m = re.search(r" collected ([0-9]+(?:\.[0-9]+)?) from .*pot", entry)
                 if m:
                     amt = float(m.group(1))
                     collected[name] += amt
                 continue
 
+        hand_total = 0.0
+        for n in set(invested.keys()) | set(collected.keys()):
+            hand_total += collected[n] - invested[n]
+
+        if abs(hand_total) > 1e-6:
+            print(f"[WARN] Hand {hand_idx}: non-zero net total = {hand_total:.4f}")
+            for n in sorted(set(invested.keys()) | set(collected.keys())):
+                print(
+                    f"   {n:10s} invested={invested[n]:.2f} "
+                    f"collected={collected[n]:.2f} delta={collected[n] - invested[n]:.2f}"
+                )
         # --- Per-hand post-processing ---
 
         any_flop = any(m in e for e in hand for m in FLOP_MARKERS)
@@ -614,6 +653,10 @@ def analyze_all_stats(
                     river_cbet_faced_opp[n] += 1
                     if river_fold_to_cbet_this[n]:
                         river_fold_to_cbet_hands[n] += 1
+
+    # Global money sanity check across the whole session
+    total_net = sum(net_profit.values())
+    print("DEBUG total net profit across all players:", round(total_net, 4))
 
     # === Build output DataFrame ===
     rows = []

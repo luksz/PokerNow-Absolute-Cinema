@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV=/Users/tanpinyee/Documents/GitHub/PokerNow-Absolute-Cinema/venv
+VIRTUAL_ENV=/Users/tanpinyee/Documents/GitHub/PokerNow-Absolute-Cinema/pokernow_analyzer/backend/venv
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
