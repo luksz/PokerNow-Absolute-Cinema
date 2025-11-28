@@ -1,0 +1,513 @@
+import sys
+import re
+from collections import defaultdict
+
+import pandas as pd
+
+# Street markers in PokerNow logs
+FLOP_MARKERS = ("*** FLOP ***", "Flop:")
+TURN_MARKERS = ("*** TURN ***", "Turn:")
+RIVER_MARKERS = ("*** RIVER ***", "River:")
+
+
+def load_df(csv_path: str) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    if "order" in df.columns:
+        df = df.sort_values("order")
+    return df
+
+
+def split_into_hands(df: pd.DataFrame):
+    """
+    Split the log into hands. Each 'hand' is a list of entry strings.
+    We start a new hand whenever we see '-- starting hand #'.
+    """
+    hands = []
+    current = []
+    for _, row in df.iterrows():
+        entry = row["entry"]
+        if "-- starting hand #" in entry:
+            if current:
+                hands.append(current)
+            current = []
+        if current is not None:
+            current.append(entry)
+    if current:
+        hands.append(current)
+    return hands
+
+
+def extract_player_name(entry: str):
+    """
+    PokerNow lines look like: '"loki @ 7Nv8hjyL1f" raises to 0.30'
+    We just want 'loki'.
+    """
+    m = re.search(r'"([^"]+?) @ [^"]+"', entry)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def detect_big_blind(df: pd.DataFrame) -> float:
+    """
+    Try to auto-detect the big blind size from 'posts a big blind' entries.
+    Fallback to 1.0 if not found.
+    """
+    for entry in df["entry"]:
+        if "posts a big blind of" in entry:
+            m = re.search(r"big blind of ([0-9]+\.[0-9]+)", entry)
+            if m:
+                return float(m.group(1))
+    return 1.0
+
+
+def analyze_all_stats(hands, big_blind: float):
+    from collections import defaultdict
+
+    # GLOBAL COUNTERS
+
+    # Basic preflop
+    hands_played = defaultdict(int)
+    vpip_hands = defaultdict(int)
+    pfr_hands = defaultdict(int)
+
+    # Raise-tree stats
+    open_raise_hands = defaultdict(int)
+    threebet_hands = defaultdict(int)
+    fourbet_hands = defaultdict(int)
+
+    threebet_opp = defaultdict(int)
+    fourbet_opp = defaultdict(int)
+    fold_to_3bet_hands = defaultdict(int)
+    fold_to_4bet_hands = defaultdict(int)
+
+    # Postflop / showdown
+    saw_flop_hands = defaultdict(int)
+    wtsd_hands = defaultdict(int)
+    wsd_hands = defaultdict(int)
+    wwsf_hands = defaultdict(int)
+
+    # Flop c-bet stats
+    preflop_agg_flop_opp = defaultdict(int)
+    flop_cbet_hands = defaultdict(int)
+    flop_cbet_faced_opp = defaultdict(int)
+    flop_fold_to_cbet_hands = defaultdict(int)
+
+    # Money
+    net_profit = defaultdict(float)
+
+    # Aggression stats (postflop only)
+    af_aggr = defaultdict(int)   # bets + raises
+    af_calls = defaultdict(int)  # calls
+    af_folds = defaultdict(int)  # folds
+
+    # ---- per-hand processing ----
+    for hand in hands:
+        total_contrib = defaultdict(float)
+        invested = defaultdict(float)
+        collected = defaultdict(float)
+
+        active = set()
+        saw_preflop = defaultdict(bool)
+        vpip_this = defaultdict(bool)
+        pfr_this = defaultdict(bool)
+
+        open_raise_this = defaultdict(bool)
+        threebet_this = defaultdict(bool)
+        fourbet_this = defaultdict(bool)
+
+        threebet_opp_this = defaultdict(bool)
+        fourbet_opp_this = defaultdict(bool)
+        fold_to_3bet_this = defaultdict(bool)
+        fold_to_4bet_this = defaultdict(bool)
+
+        saw_flop_this = defaultdict(bool)
+        wtsd_this = defaultdict(bool)
+        wsd_this = defaultdict(bool)
+        wwsf_this = defaultdict(bool)
+
+        cbet_by_player = defaultdict(bool)
+        fold_to_cbet_this = defaultdict(bool)
+
+        # per-hand postflop aggression counters
+        aggr_postflop = defaultdict(int)   # bets + raises on flop/turn/river
+        calls_postflop = defaultdict(int)
+        folds_postflop = defaultdict(int)
+
+        street = "preflop"
+        preflop_raises = []  # sequence of raiser names
+        showdown = False
+        preflop_agg = None
+        flop_cbet_done = False
+
+        # key preflop roles
+        open_raiser = None
+        three_bettor = None
+        four_bettor = None
+
+        for entry in hand:
+            # ---- Street transitions ----
+            if any(m in entry for m in FLOP_MARKERS):
+                street = "flop"
+                if preflop_raises:
+                    preflop_agg = preflop_raises[-1]
+                for name in active:
+                    saw_flop_this[name] = True
+                continue
+            if any(m in entry for m in TURN_MARKERS):
+                street = "turn"
+                continue
+            if any(m in entry for m in RIVER_MARKERS):
+                street = "river"
+                continue
+
+            # Showdown marker
+            if "shows a " in entry:
+                showdown = True
+
+            # Uncalled bet refund
+            if entry.startswith("Uncalled bet"):
+                m2 = re.search(
+                    r'Uncalled bet of ([0-9]+\.[0-9]+) returned to "([^"]+)"', entry
+                )
+                if m2:
+                    amt = float(m2.group(1))
+                    pname = m2.group(2)
+                    invested[pname] -= amt
+                    total_contrib[pname] -= amt
+                continue
+
+            name = extract_player_name(entry)
+            if not name:
+                continue
+
+            # --- Mark that they are in the hand ---
+            if street == "preflop":
+                saw_preflop[name] = True
+                active.add(name)
+
+                # PRE-FLOP OPPORTUNITIES:
+                # - 3-bet opp: facing an open (one raiser) and no 3-bet yet,
+                #   and they are not the opener.
+                if open_raiser is not None and three_bettor is None and name != open_raiser:
+                    threebet_opp_this[name] = True
+
+                # - 4-bet opp: original opener facing a 3-bet, before any 4-bet exists.
+                if (
+                    open_raiser is not None
+                    and three_bettor is not None
+                    and four_bettor is None
+                    and name == open_raiser
+                ):
+                    fourbet_opp_this[name] = True
+
+            # ---- Blinds (forced) ----
+            if "posts a small blind" in entry or "posts a big blind" in entry:
+                m = re.search(r"([0-9]+\.[0-9]+)", entry)
+                if m:
+                    amt = float(m.group(1))
+                    invested[name] += amt
+                    total_contrib[name] += amt
+                continue
+
+            # ---- Folds ----
+            if " folds" in entry:
+                if street == "preflop":
+                    # Only count fold-to-3bet/4bet if they actually had that opp
+                    if threebet_opp_this[name] and not threebet_this[name]:
+                        fold_to_3bet_this[name] = True
+                    if fourbet_opp_this[name] and not fourbet_this[name]:
+                        fold_to_4bet_this[name] = True
+                else:
+                    folds_postflop[name] += 1
+                    if street == "flop" and flop_cbet_done:
+                        fold_to_cbet_this[name] = True
+                active.discard(name)
+                continue
+
+            # ---- Calls ----
+            if " calls " in entry:
+                m = re.search(r" calls ([0-9]+\.[0-9]+)", entry)
+                if m:
+                    amt = float(m.group(1))
+                    invested[name] += amt
+                    total_contrib[name] += amt
+                    if street == "preflop":
+                        vpip_this[name] = True
+                    else:
+                        calls_postflop[name] += 1
+                continue
+
+            # ---- Checks ----
+            if " checks" in entry:
+                continue
+
+            # ---- Bets ----
+            if " bets " in entry:
+                m = re.search(r" bets ([0-9]+\.[0-9]+)", entry)
+                if m:
+                    amt = float(m.group(1))
+                    invested[name] += amt
+                    total_contrib[name] += amt
+
+                    if street == "preflop":
+                        vpip_this[name] = True
+                        pfr_this[name] = True
+
+                        if open_raiser is None:
+                            # first raise = open
+                            open_raiser = name
+                            open_raise_this[name] = True
+                        elif three_bettor is None:
+                            # first re-raise = 3-bet
+                            three_bettor = name
+                            threebet_this[name] = True
+                        elif four_bettor is None and name == open_raiser:
+                            # opener re-raises the 3-bet = 4-bet
+                            four_bettor = name
+                            fourbet_this[name] = True
+
+                        preflop_raises.append(name)
+
+                    else:
+                        # postflop aggression
+                        aggr_postflop[name] += 1
+                        if (
+                            street == "flop"
+                            and preflop_agg is not None
+                            and name == preflop_agg
+                            and not flop_cbet_done
+                        ):
+                            flop_cbet_done = True
+                            cbet_by_player[name] = True
+                continue
+
+            # ---- Raises ----
+            if " raises to " in entry:
+                m = re.search(r" raises to ([0-9]+\.[0-9]+)", entry)
+                if m:
+                    to_amt = float(m.group(1))
+                    delta = max(0.0, to_amt - total_contrib[name])
+                    invested[name] += delta
+                    total_contrib[name] += delta
+
+                    if street == "preflop":
+                        vpip_this[name] = True
+                        pfr_this[name] = True
+
+                        if open_raiser is None:
+                            open_raiser = name
+                            open_raise_this[name] = True
+                        elif three_bettor is None:
+                            three_bettor = name
+                            threebet_this[name] = True
+                        elif four_bettor is None and name == open_raiser:
+                            four_bettor = name
+                            fourbet_this[name] = True
+
+                        preflop_raises.append(name)
+
+                    else:
+                        aggr_postflop[name] += 1
+                        if (
+                            street == "flop"
+                            and preflop_agg is not None
+                            and name == preflop_agg
+                            and not flop_cbet_done
+                        ):
+                            flop_cbet_done = True
+                            cbet_by_player[name] = True
+                continue
+
+            # ---- Collected pot ----
+            if " collected " in entry and "from pot" in entry:
+                m = re.search(r" collected ([0-9]+\.[0-9]+) from pot", entry)
+                if m:
+                    amt = float(m.group(1))
+                    collected[name] += amt
+                continue
+
+        # Did this hand see a flop?
+        any_flop = any(m in e for e in hand for m in FLOP_MARKERS)
+
+        # Showdown participants (who showed cards)
+        shows_map = {}
+        if showdown:
+            for entry in hand:
+                if "shows a " in entry:
+                    n = extract_player_name(entry)
+                    if n:
+                        shows_map[n] = True
+
+        # Aggregate this hand into global counters
+        all_names = set(
+            list(saw_preflop.keys()) + list(invested.keys()) + list(collected.keys())
+        )
+
+        for name in all_names:
+            if saw_preflop[name]:
+                hands_played[name] += 1
+            if saw_flop_this[name]:
+                saw_flop_hands[name] += 1
+
+            if showdown and shows_map.get(name, False):
+                wtsd_this[name] = True
+
+            if collected[name] > 0 and saw_flop_this[name]:
+                wwsf_this[name] = True
+
+            net_profit[name] += collected[name] - invested[name]
+
+            af_aggr[name] += aggr_postflop[name]
+            af_calls[name] += calls_postflop[name]
+            af_folds[name] += folds_postflop[name]
+
+        # WTSD / W$SD / WWSF
+        for name, went in wtsd_this.items():
+            if went:
+                wtsd_hands[name] += 1
+                if collected[name] > 0:
+                    wsd_this[name] = True
+
+        for name, won_sd in wsd_this.items():
+            if won_sd:
+                wsd_hands[name] += 1
+
+        for name, won_flop in wwsf_this.items():
+            if won_flop:
+                wwsf_hands[name] += 1
+
+        # Preflop stats (per hand → global)
+        for name, saw in saw_preflop.items():
+            if not saw:
+                continue
+            if vpip_this[name]:
+                vpip_hands[name] += 1
+            if pfr_this[name]:
+                pfr_hands[name] += 1
+            if open_raise_this[name]:
+                open_raise_hands[name] += 1
+            if threebet_this[name]:
+                threebet_hands[name] += 1
+            if fourbet_this[name]:
+                fourbet_hands[name] += 1
+            if threebet_opp_this[name]:
+                threebet_opp[name] += 1
+            if fourbet_opp_this[name]:
+                fourbet_opp[name] += 1
+            if fold_to_3bet_this[name]:
+                fold_to_3bet_hands[name] += 1
+            if fold_to_4bet_this[name]:
+                fold_to_4bet_hands[name] += 1
+
+        # Flop C-bet + fold-to-cbet
+        if any_flop and preflop_raises:
+            preflop_agg = preflop_raises[-1]
+            if saw_flop_this[preflop_agg]:
+                preflop_agg_flop_opp[preflop_agg] += 1
+                if cbet_by_player[preflop_agg]:
+                    flop_cbet_hands[preflop_agg] += 1
+
+            if flop_cbet_done:
+                for name in saw_flop_this.keys():
+                    if name == preflop_agg:
+                        continue
+                    if saw_flop_this[name]:
+                        flop_cbet_faced_opp[name] += 1
+                        if fold_to_cbet_this[name]:
+                            flop_fold_to_cbet_hands[name] += 1
+
+    # ---- Build final stats table ----
+    rows = []
+
+    for name in sorted(hands_played.keys()):
+        h = hands_played[name]
+        if h == 0:
+            continue
+
+        vpip = 100 * vpip_hands[name] / h
+        pfr = 100 * pfr_hands[name] / h
+        bb100 = (net_profit[name] / big_blind) / h * 100
+
+        sf = saw_flop_hands[name]
+        wtsd_pct = 100 * wtsd_hands[name] / sf if sf > 0 else 0.0
+        wsd_pct = 100 * wsd_hands[name] / wtsd_hands[name] if wtsd_hands[name] > 0 else 0.0
+        wwsf_pct = 100 * wwsf_hands[name] / sf if sf > 0 else 0.0
+
+        threebet_opp_n = threebet_opp[name]
+        fourbet_opp_n = fourbet_opp[name]
+
+        threebet_pct = 100 * threebet_hands[name] / threebet_opp_n if threebet_opp_n > 0 else 0.0
+        fourbet_pct = 100 * fourbet_hands[name] / fourbet_opp_n if fourbet_opp_n > 0 else 0.0
+
+        fold_to_3bet_pct = 100 * fold_to_3bet_hands[name] / threebet_opp_n if threebet_opp_n > 0 else 0.0
+        fold_to_4bet_pct = 100 * fold_to_4bet_hands[name] / fourbet_opp_n if fourbet_opp_n > 0 else 0.0
+
+        cbet_opp = preflop_agg_flop_opp[name]
+        cbet_pct = 100 * flop_cbet_hands[name] / cbet_opp if cbet_opp > 0 else 0.0
+        faced_cbet = flop_cbet_faced_opp[name]
+        fold_cbet_pct = 100 * flop_fold_to_cbet_hands[name] / faced_cbet if faced_cbet > 0 else 0.0
+
+        # AF and AFq (postflop only)
+        aggr = af_aggr[name]
+        calls = af_calls[name]
+        folds = af_folds[name]
+        af = aggr / calls if calls > 0 else 0.0
+        total_pf_actions = aggr + calls + folds
+        afq = 100 * aggr / total_pf_actions if total_pf_actions > 0 else 0.0
+
+        rows.append(
+            {
+                "player": name,
+                "hands": h,
+                "BB/100": round(bb100, 1),
+                "VPIP%": round(vpip, 1),
+                "PFR%": round(pfr, 1),
+                "3BET%": round(threebet_pct, 1),
+                "4BET%": round(fourbet_pct, 1),
+                "Fold to 3BET%": round(fold_to_3bet_pct, 1),
+                "Fold to 4BET%": round(fold_to_4bet_pct, 1),
+                "AF": round(af, 2),
+                "AFq%": round(afq, 1),
+                "SawFlop": sf,
+                "WTSD%": round(wtsd_pct, 1),
+                "W$SD%": round(wsd_pct, 1),
+                "WWSF%": round(wwsf_pct, 1),
+                "Flop Cbet%": round(cbet_pct, 1),
+                "Fold to Flop Cbet%": round(fold_cbet_pct, 1),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python analyze.py path/to/pokernow.csv")
+        sys.exit(1)
+
+    csv_path = sys.argv[1]
+    df = load_df(csv_path)
+    hands = split_into_hands(df)
+
+    # Skip any lobby junk before first real hand
+    first_real = None
+    for i, h in enumerate(hands):
+        if any("-- starting hand #" in e for e in h):
+            first_real = i
+            break
+    if first_real is None:
+        print("No hands found in file.")
+        sys.exit(1)
+
+    hands_clean = hands[first_real:]
+    big_blind = detect_big_blind(df)
+    stats_df = analyze_all_stats(hands_clean, big_blind=big_blind)
+    stats_df = stats_df.sort_values("hands", ascending=False)
+
+    print("\n=== Full stats (preflop + flop + showdown + aggression) ===")
+    print(stats_df.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()
