@@ -3,7 +3,7 @@
 cd backend
 
 1.2. Create virtual environment
-python -m venv venv
+python3.11 -m venv venv
 
 1.3. Activate virtual environment
 
@@ -65,3 +65,4 @@ app.add_middleware(
 
 Run again:
 uvicorn api:app --reload
+
